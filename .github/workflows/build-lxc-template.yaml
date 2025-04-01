@@ -10,6 +10,12 @@ on:
         required: false
         default: ''
 
+# Add permissions declaration
+permissions:
+  contents: write
+  packages: write
+  actions: write
+
 jobs:
   build-template:
     runs-on: ubuntu-latest
@@ -78,9 +84,17 @@ jobs:
       - name: Update last built version
         if: ${{ !env.ACT }} # Skip git operations when running locally with act
         run: |
+          # Make sure we're up to date with remote
+          git pull --rebase origin main
+
+          # Update the version file
           echo "${{ steps.set-version.outputs.driver_version }}" > last_built_version.txt
-          git config user.name github-actions
-          git config user.email github-actions@github.com
+
+          # Configure Git
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          # Add, commit and push
           git add last_built_version.txt
           git commit -m "Update last built version to ${{ steps.set-version.outputs.driver_version }}"
           git push
