@@ -68,7 +68,7 @@ jobs:
         if: steps.check-version.outputs.update_available == 'true' && github.repository != '' && !env.ACT
         run: |
           # Trigger build workflow using workflow_dispatch
-          gh workflow run build-template.yml -f driver_version=${{ steps.check-version.outputs.driver_version }}
+          gh workflow run build-lxc-template.yml -f driver_version=${{ steps.check-version.outputs.driver_version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
