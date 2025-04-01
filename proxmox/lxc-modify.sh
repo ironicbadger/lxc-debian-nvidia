@@ -64,5 +64,8 @@ add_if_not_exists "lxc.mount.entry: /dev/nvidia-caps/nvidia-cap2 dev/nvidia-caps
 add_if_not_exists "lxc.apparmor.profile: unconfined"
 add_if_not_exists "lxc.cgroup2.devices.allow: a"
 add_if_not_exists "lxc.cap.drop:"
+add_if_not_exists "lxc.cgroup2.devices.allow: c 10:200 rwm"
+add_if_not_exists "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+
 
 echo "Proxmox VE LXC container $lxc_id configuration has been updated successfully."
