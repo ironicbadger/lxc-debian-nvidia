@@ -60,8 +60,11 @@ jobs:
       - name: Commit and push changes
         if: steps.check-version.outputs.update_available == 'true'
         run: |
+          # Clean any potential unstaged changes
+          git reset --hard HEAD
+
           # Make sure we're up to date with remote
-          git pull --rebase origin main
+          git pull origin main
 
           # Update the version file
           echo "${{ steps.check-version.outputs.driver_version }}" > last_built_version.txt
