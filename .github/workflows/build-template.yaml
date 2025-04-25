@@ -94,10 +94,16 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-          # Add, commit and push
-          git add last_built_version.txt
-          git commit -m "Update last built version to ${{ steps.set-version.outputs.driver_version }}"
-          git push
+          # Check if there are changes to commit
+          if [[ -n "$(git status --porcelain last_built_version.txt)" ]]; then
+            # Add, commit and push
+            git add last_built_version.txt
+            git commit -m "Update last built version to ${{ steps.set-version.outputs.driver_version }}"
+            git push
+            echo "Successfully updated last_built_version.txt"
+          else
+            echo "No changes to last_built_version.txt, skipping commit"
+          fi
           
       - name: Local testing output
         if: ${{ env.ACT }}
