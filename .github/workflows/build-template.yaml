@@ -55,10 +55,10 @@ jobs:
           
           # Extract the template from the container
           CONTAINER_ID=$(docker create nvidia-lxc-template:${{ steps.set-version.outputs.driver_version }})
-          docker cp $CONTAINER_ID:/template/nvidia-template-debian12-${{ steps.set-version.outputs.driver_version }}.tar.gz ./output/
+          docker cp $CONTAINER_ID:/template/nvidia-template-debian13-${{ steps.set-version.outputs.driver_version }}.tar.gz ./output/
           docker rm $CONTAINER_ID
           
-          echo "Template created at ./output/nvidia-template-debian12-${{ steps.set-version.outputs.driver_version }}.tar.gz"
+          echo "Template created at ./output/nvidia-template-debian13-${{ steps.set-version.outputs.driver_version }}.tar.gz"
       
       - name: Create Release
         id: create_release
@@ -68,14 +68,14 @@ jobs:
           tag_name: v${{ steps.set-version.outputs.driver_version }}
           name: NVIDIA Template v${{ steps.set-version.outputs.driver_version }}
           body: |
-            Proxmox LXC template with NVIDIA driver version ${{ steps.set-version.outputs.driver_version }}
+            Debian 13 Proxmox LXC template with NVIDIA driver version ${{ steps.set-version.outputs.driver_version }}
             
             ### Features
             - Pre-installed NVIDIA driver ${{ steps.set-version.outputs.driver_version }}
             - Docker with NVIDIA Container Toolkit
             - Sample Docker Compose file for Ollama
           files: |
-            ./output/nvidia-template-debian12-${{ steps.set-version.outputs.driver_version }}.tar.gz
+            ./output/nvidia-template-debian13-${{ steps.set-version.outputs.driver_version }}.tar.gz
           draft: false
           prerelease: false
         env:
