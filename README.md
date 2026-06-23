@@ -1,10 +1,22 @@
 # lxc-debian-nvidia
 
-Automatically builds a Proxmox compatible LXC template with the required tools to utilize an Nvidia GPU.
+Debian 13 Proxmox LXC template with NVIDIA userland, Docker, and NVIDIA Container Toolkit.
 
 + [![Check Nvidia Driver version](https://github.com/ironicbadger/lxc-debian-nvidia/actions/workflows/check-nvidia-driver-version.yaml/badge.svg)](https://github.com/ironicbadger/lxc-debian-nvidia/actions/workflows/check-nvidia-driver-version.yaml)
 + [![Build LXC Template](https://github.com/ironicbadger/lxc-debian-nvidia/actions/workflows/build-template.yaml/badge.svg)](https://github.com/ironicbadger/lxc-debian-nvidia/actions/workflows/build-template.yaml)
 
-## Usage
+## Quickstart
 
-Import the `tar.gz` file with the required Nvidia driver version from the releases section. Ensure Proxmox host has requisite Nvidia drivers too.
+Create and configure a GPU-ready LXC from the latest release:
+
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ironicbadger/lxc-debian-nvidia/main/proxmox/lxc-create.sh)" -- --id 123
+```
+
+The script downloads the latest Debian 13 template, applies the required Proxmox GPU config, and generates a root password if you do not pass one.
+
+Fix an existing LXC in place:
+
+```sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ironicbadger/lxc-debian-nvidia/main/proxmox/lxc-modify.sh)" -- --id 123
+```
