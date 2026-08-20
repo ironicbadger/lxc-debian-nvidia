@@ -1,4 +1,4 @@
-FROM debian:12.7-slim
+FROM debian:13-slim
 
 ARG NVIDIA_DRIVER_VERSION
 
