@@ -1,26 +1,111 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Default values
 DEFAULT_CORES=8
 DEFAULT_MEMORY=8192
-DEFAULT_HOSTNAME="abc123"
-DEFAULT_ROOT_PASSWORD="abc123"
-DEFAULT_STORAGE="nvme1tb"
 DEFAULT_DISK_SIZE=64
 DEFAULT_SWAP=512
-TEMPLATE="/var/lib/vz/template/cache/nvidia-template-debian12-570.124.04.tar.gz"
+DEFAULT_BRIDGE="vmbr0"
+DEFAULT_REPOSITORY="ironicbadger/lxc-debian-nvidia"
+DEFAULT_TEMPLATE_FLAVOR="debian13"
+DEFAULT_TEMPLATE_CACHE_DIR="/var/lib/vz/template/cache"
 
-# Function to display usage information
 usage() {
     echo "Usage: $0 --id LXC_ID [--cores CORES] [--memory MEMORY] [--hostname HOSTNAME]"
     echo "          [--password PASSWORD] [--storage STORAGE] [--disk-size SIZE]"
-    echo "          [--swap SWAP]"
+    echo "          [--swap SWAP] [--bridge BRIDGE] [--driver-version VERSION]"
+    echo "          [--template /path/to/template.tar.gz]"
     exit 1
 }
 
-# Parse command line arguments
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Error: required command '$1' is not installed"
+        exit 1
+    }
+}
+
+generate_mac() {
+    printf "BC:%02X:%02X:%02X:%02X:%02X\n" $((RANDOM % 256)) $((RANDOM % 256)) $((RANDOM % 256)) $((RANDOM % 256)) $((RANDOM % 256))
+}
+
+generate_password() {
+    od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+detect_storage() {
+    local storage
+    while read -r storage; do
+        case "$storage" in
+            local-lvm|local-zfs|local) echo "$storage"; return 0 ;;
+        esac
+    done < <(pvesm status 2>/dev/null | awk 'NR>1 {print $1}')
+
+    storage=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1; exit}')
+    if [[ -n "$storage" ]]; then
+        echo "$storage"
+        return 0
+    fi
+
+    echo "Error: unable to detect a Proxmox storage. Pass --storage explicitly."
+    exit 1
+}
+
+latest_driver_version() {
+    curl -fsSL "https://api.github.com/repos/${DEFAULT_REPOSITORY}/releases/latest" \
+        | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"v\([^"]*\)",/\1/p' \
+        | head -n1
+}
+
+add_if_not_exists() {
+    local config="$1"
+    if ! grep -Fxq "$config" "$CONFIG_FILE"; then
+        echo "$config" >> "$CONFIG_FILE"
+        echo "Added: $config"
+    fi
+}
+
+apply_gpu_config() {
+    if grep -q "^unprivileged:" "$CONFIG_FILE"; then
+        sed -i 's/^unprivileged: 1/unprivileged: 0/' "$CONFIG_FILE"
+    else
+        add_if_not_exists "unprivileged: 0"
+    fi
+
+    add_if_not_exists "lxc.cgroup2.devices.allow: c 195:* rwm"
+    add_if_not_exists "lxc.cgroup2.devices.allow: c 234:* rwm"
+    add_if_not_exists "lxc.cgroup2.devices.allow: c 509:* rwm"
+    add_if_not_exists "lxc.cgroup2.devices.allow: c 10:200 rwm"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia-caps/nvidia-cap1 dev/nvidia-caps/nvidia-cap1 none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/nvidia-caps/nvidia-cap2 dev/nvidia-caps/nvidia-cap2 none bind,optional,create=file"
+    add_if_not_exists "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
+    add_if_not_exists "lxc.apparmor.profile: unconfined"
+    add_if_not_exists "lxc.cgroup2.devices.allow: a"
+    add_if_not_exists "lxc.cap.drop:"
+}
+
+download_template() {
+    local version="$1"
+    local template_path="${DEFAULT_TEMPLATE_CACHE_DIR}/nvidia-template-${DEFAULT_TEMPLATE_FLAVOR}-${version}.tar.gz"
+
+    mkdir -p "$DEFAULT_TEMPLATE_CACHE_DIR"
+    if [[ ! -f "$template_path" ]]; then
+        echo "Downloading template ${version}..."
+        curl -fL --progress-bar \
+            "https://github.com/${DEFAULT_REPOSITORY}/releases/download/v${version}/nvidia-template-${DEFAULT_TEMPLATE_FLAVOR}-${version}.tar.gz" \
+            -o "$template_path"
+    fi
+
+    echo "$template_path"
+}
+
 while [[ "$#" -gt 0 ]]; do
-    case $1 in
+    case "$1" in
         --id) LXC_ID="$2"; shift ;;
         --cores) CORES="$2"; shift ;;
         --memory) MEMORY="$2"; shift ;;
@@ -29,59 +114,51 @@ while [[ "$#" -gt 0 ]]; do
         --storage) STORAGE="$2"; shift ;;
         --disk-size) DISK_SIZE="$2"; shift ;;
         --swap) SWAP="$2"; shift ;;
+        --bridge) BRIDGE="$2"; shift ;;
+        --driver-version) DRIVER_VERSION="$2"; shift ;;
+        --template) TEMPLATE="$2"; shift ;;
         --help) usage ;;
         *) usage ;;
     esac
     shift
 done
 
-# Check if LXC ID was provided
-if [ -z "$LXC_ID" ]; then
+if [[ -z "${LXC_ID:-}" ]]; then
     usage
 fi
 
-# Set defaults for unspecified parameters
-CORES=${CORES:-$DEFAULT_CORES}
-MEMORY=${MEMORY:-$DEFAULT_MEMORY}
-HOSTNAME=${HOSTNAME:-$DEFAULT_HOSTNAME}
-ROOT_PASSWORD=${ROOT_PASSWORD:-$DEFAULT_ROOT_PASSWORD}
-STORAGE=${STORAGE:-$DEFAULT_STORAGE}
-DISK_SIZE=${DISK_SIZE:-$DEFAULT_DISK_SIZE}
-SWAP=${SWAP:-$DEFAULT_SWAP}
+require_command pct
+require_command pvesm
+require_command curl
 
-# Define the config file path for Proxmox VE
-CONFIG_FILE="/etc/pve/lxc/$LXC_ID.conf"
+BRIDGE=${BRIDGE:-$DEFAULT_BRIDGE}
+CONFIG_FILE="/etc/pve/lxc/${LXC_ID}.conf"
 
-# Function to generate random MAC address
-generate_mac() {
-    printf "BC:%02X:%02X:%02X:%02X:%02X" $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256))
-}
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    CORES=${CORES:-$DEFAULT_CORES}
+    MEMORY=${MEMORY:-$DEFAULT_MEMORY}
+    DISK_SIZE=${DISK_SIZE:-$DEFAULT_DISK_SIZE}
+    SWAP=${SWAP:-$DEFAULT_SWAP}
+    HOSTNAME=${HOSTNAME:-gpu-${LXC_ID}}
+    STORAGE=${STORAGE:-$(detect_storage)}
+    ROOT_PASSWORD=${ROOT_PASSWORD:-$(generate_password)}
+    DRIVER_VERSION=${DRIVER_VERSION:-$(latest_driver_version)}
 
-# Function to add configuration if it doesn't exist
-add_if_not_exists() {
-    local config="$1"
-    if ! grep -q "^$config" "$CONFIG_FILE"; then
-        echo "$config" >> "$CONFIG_FILE"
-        echo "Added: $config"
-    else
-        echo "Already exists: $config"
-    fi
-}
-
-# Check if the container exists
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Container $LXC_ID does not exist. Creating..."
-
-    # Check if template exists
-    if [ ! -f "$TEMPLATE" ]; then
-        echo "Error: Template $TEMPLATE not found!"
+    if [[ -z "$DRIVER_VERSION" ]]; then
+        echo "Error: unable to determine the latest template version. Pass --driver-version or --template."
         exit 1
     fi
 
-    # Generate a random MAC address
-    MAC_ADDRESS=$(generate_mac)
+    if [[ -z "${TEMPLATE:-}" ]]; then
+        TEMPLATE=$(download_template "$DRIVER_VERSION")
+    fi
 
-    # Create the container with basic parameters
+    if [[ ! -f "$TEMPLATE" ]]; then
+        echo "Error: template ${TEMPLATE} not found"
+        exit 1
+    fi
+
+    echo "Creating LXC ${LXC_ID} from ${TEMPLATE}..."
     pct create "$LXC_ID" "$TEMPLATE" \
         --cores "$CORES" \
         --memory "$MEMORY" \
@@ -91,46 +168,28 @@ if [ ! -f "$CONFIG_FILE" ]; then
         --swap "$SWAP" \
         --password "$ROOT_PASSWORD" \
         --unprivileged 0 \
-        --net0 "name=eth0,bridge=vmbr0,firewall=1,hwaddr=$MAC_ADDRESS,ip=dhcp,type=veth"
+        --features keyctl=1,nesting=1 \
+        --net0 "name=eth0,bridge=${BRIDGE},firewall=1,hwaddr=$(generate_mac),ip=dhcp,type=veth"
 
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to create container $LXC_ID"
-        exit 1
+    echo "Root password: ${ROOT_PASSWORD}"
+else
+    echo "LXC ${LXC_ID} already exists. Updating settings and GPU config..."
+    pct set "$LXC_ID" --features keyctl=1,nesting=1 >/dev/null
+
+    SET_ARGS=()
+    if [[ -n "${CORES:-}" ]]; then SET_ARGS+=(--cores "$CORES"); fi
+    if [[ -n "${MEMORY:-}" ]]; then SET_ARGS+=(--memory "$MEMORY"); fi
+    if [[ -n "${SWAP:-}" ]]; then SET_ARGS+=(--swap "$SWAP"); fi
+    if [[ -n "${HOSTNAME:-}" ]]; then SET_ARGS+=(--hostname "$HOSTNAME"); fi
+    if [[ -n "${ROOT_PASSWORD:-}" ]]; then SET_ARGS+=(--password "$ROOT_PASSWORD"); fi
+
+    if [[ "${#SET_ARGS[@]}" -gt 0 ]]; then
+        pct set "$LXC_ID" "${SET_ARGS[@]}" >/dev/null
     fi
-
-    echo "Container $LXC_ID created successfully."
-else
-    echo "Container $LXC_ID already exists. Updating configuration..."
-
-    # Update container settings if it already exists
-    pct set "$LXC_ID" --cores "$CORES" --memory "$MEMORY" --swap "$SWAP" 2>/dev/null
-
-    echo "Container settings updated."
 fi
 
-# Handle the unprivileged setting
-if grep -q "^unprivileged:" "$CONFIG_FILE"; then
-    # If unprivileged exists, check if it's set to 1 and change to 0 if needed
-    sed -i 's/^unprivileged: 1/unprivileged: 0/' "$CONFIG_FILE"
-    echo "Checked unprivileged setting"
-else
-    # If unprivileged doesn't exist, add it
-    add_if_not_exists "unprivileged: 0"
-fi
+apply_gpu_config
 
-# Add all the required configuration lines
-add_if_not_exists "lxc.cgroup2.devices.allow: c 195:* rwm"
-add_if_not_exists "lxc.cgroup2.devices.allow: c 234:* rwm"
-add_if_not_exists "lxc.cgroup2.devices.allow: c 509:* rwm"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia-modeset dev/nvidia-modeset none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia-caps/nvidia-cap1 dev/nvidia-caps/nvidia-cap1 none bind,optional,create=file"
-add_if_not_exists "lxc.mount.entry: /dev/nvidia-caps/nvidia-cap2 dev/nvidia-caps/nvidia-cap2 none bind,optional,create=file"
-add_if_not_exists "lxc.apparmor.profile: unconfined"
-add_if_not_exists "lxc.cgroup2.devices.allow: a"
-add_if_not_exists "lxc.cap.drop:"
-
-echo "Proxmox VE LXC container $LXC_ID configuration has been completed successfully."
+echo "LXC ${LXC_ID} is ready."
+echo "Start it with: pct start ${LXC_ID}"
+echo "Verify GPU access with: pct exec ${LXC_ID} -- nvidia-smi"
