@@ -1,0 +1,47 @@
+name: PR Build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-template:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate shell scripts
+        run: |
+          bash -n proxmox/lxc-create.sh
+          bash -n proxmox/lxc-modify.sh
+          bash -n scripts/create_template.sh
+          bash -n scripts/setup_template.sh
+
+      - name: Read driver version
+        id: driver-version
+        run: |
+          DRIVER_VERSION=$(cat last_built_version.txt)
+          echo "driver_version=${DRIVER_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build template image
+        run: |
+          docker build \
+            --build-arg NVIDIA_DRIVER_VERSION="${{ steps.driver-version.outputs.driver_version }}" \
+            -t nvidia-lxc-template-pr:${{ steps.driver-version.outputs.driver_version }} \
+            .
+
+      - name: Verify template artifact
+        run: |
+          CONTAINER_ID=$(docker create nvidia-lxc-template-pr:${{ steps.driver-version.outputs.driver_version }})
+          trap 'docker rm -f "$CONTAINER_ID" >/dev/null 2>&1 || true' EXIT
+
+          docker cp \
+            "$CONTAINER_ID:/template/nvidia-template-debian13-${{ steps.driver-version.outputs.driver_version }}.tar.gz" \
+            ./nvidia-template-debian13-${{ steps.driver-version.outputs.driver_version }}.tar.gz
+
+          test -s "./nvidia-template-debian13-${{ steps.driver-version.outputs.driver_version }}.tar.gz"
