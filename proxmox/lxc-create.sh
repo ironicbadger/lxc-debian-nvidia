@@ -34,21 +34,22 @@ generate_password() {
 }
 
 detect_storage() {
-    local storage
-    while read -r storage; do
-        case "$storage" in
-            local-lvm|local-zfs|local) echo "$storage"; return 0 ;;
-        esac
-    done < <(pvesm status 2>/dev/null | awk 'NR>1 {print $1}')
+    local storage candidates
+    candidates=$(pvesm status --content rootdir --enabled 1 | awk 'NR>1 && $3 == "active" {print $1}') || return 1
+    for storage in local-lvm local-zfs local; do
+        if grep -Fxq "$storage" <<< "$candidates"; then
+            echo "$storage"
+            return 0
+        fi
+    done
 
-    storage=$(pvesm status 2>/dev/null | awk 'NR>1 {print $1; exit}')
-    if [[ -n "$storage" ]]; then
-        echo "$storage"
+    if [[ -n "$candidates" ]]; then
+        echo "${candidates%%$'\n'*}"
         return 0
     fi
 
-    echo "Error: unable to detect a Proxmox storage. Pass --storage explicitly."
-    exit 1
+    echo "Error: no active Proxmox storage supports rootdir. Pass --storage explicitly." >&2
+    return 1
 }
 
 latest_driver_version() {
@@ -94,11 +95,23 @@ download_template() {
     local template_path="${DEFAULT_TEMPLATE_CACHE_DIR}/nvidia-template-${DEFAULT_TEMPLATE_FLAVOR}-${version}.tar.gz"
 
     mkdir -p "$DEFAULT_TEMPLATE_CACHE_DIR"
-    if [[ ! -f "$template_path" ]]; then
-        echo "Downloading template ${version}..."
-        curl -fL --progress-bar \
+    if [[ ! -s "$template_path" ]]; then
+        local temporary_path
+        temporary_path=$(mktemp "${template_path}.XXXXXX")
+        echo "Downloading template ${version}..." >&2
+        if ! curl -fL --progress-bar \
             "https://github.com/${DEFAULT_REPOSITORY}/releases/download/v${version}/nvidia-template-${DEFAULT_TEMPLATE_FLAVOR}-${version}.tar.gz" \
-            -o "$template_path"
+            -o "$temporary_path"; then
+            rm -f "$temporary_path"
+            echo "Error: unable to download the Debian 13 template for ${version}. Use a release containing that asset or pass --template." >&2
+            return 1
+        fi
+        if [[ ! -s "$temporary_path" ]]; then
+            rm -f "$temporary_path"
+            echo "Error: downloaded template is empty." >&2
+            return 1
+        fi
+        mv "$temporary_path" "$template_path"
     fi
 
     echo "$template_path"
@@ -129,7 +142,6 @@ fi
 
 require_command pct
 require_command pvesm
-require_command curl
 
 BRIDGE=${BRIDGE:-$DEFAULT_BRIDGE}
 CONFIG_FILE="/etc/pve/lxc/${LXC_ID}.conf"
@@ -142,14 +154,15 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     HOSTNAME=${HOSTNAME:-gpu-${LXC_ID}}
     STORAGE=${STORAGE:-$(detect_storage)}
     ROOT_PASSWORD=${ROOT_PASSWORD:-$(generate_password)}
-    DRIVER_VERSION=${DRIVER_VERSION:-$(latest_driver_version)}
-
-    if [[ -z "$DRIVER_VERSION" ]]; then
-        echo "Error: unable to determine the latest template version. Pass --driver-version or --template."
-        exit 1
-    fi
-
     if [[ -z "${TEMPLATE:-}" ]]; then
+        require_command curl
+        DRIVER_VERSION=${DRIVER_VERSION:-$(latest_driver_version)}
+
+        if [[ -z "$DRIVER_VERSION" ]]; then
+            echo "Error: unable to determine the latest template version. Pass --driver-version or --template." >&2
+            exit 1
+        fi
+
         TEMPLATE=$(download_template "$DRIVER_VERSION")
     fi
 

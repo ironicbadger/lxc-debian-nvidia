@@ -15,6 +15,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/ironicbadger/lxc-debian-
 
 The script downloads the latest Debian 13 template, applies the required Proxmox GPU config, and generates a root password if you do not pass one.
 
+The latest release must contain a `nvidia-template-debian13-<driver-version>.tar.gz` asset. After this change is merged, run the **Build LXC Template** workflow from `main` to publish that asset; merging alone does not trigger a release build. The NVIDIA driver version must match the Proxmox host's driver. Use `--driver-version VERSION` to select a matching release, or `--template /path/to/template.tar.gz` to use a local template without contacting GitHub. Storage is selected from active stores supporting container root filesystems; use `--storage STORAGE` to override it.
+
 Fix an existing LXC in place:
 
 ```sh
