@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 # This script is copied inside the template container and run to set it up
 
@@ -95,7 +95,7 @@ EOF
 
 # Add instructions for container configuration in Proxmox
 cat > /root/README.txt << EOF
-=== NVIDIA GPU-enabled LXC Container ===
+=== NVIDIA GPU-enabled Debian 13 LXC Container ===
 
 This container has NVIDIA driver ${NVIDIA_DRIVER_VERSION} pre-installed.
 

@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 NVIDIA_DRIVER_VERSION=$1
 
@@ -9,7 +9,7 @@ if [ -z "$NVIDIA_DRIVER_VERSION" ]; then
     exit 1
 fi
 
-TEMPLATE_NAME="nvidia-template-debian12-${NVIDIA_DRIVER_VERSION}"
+TEMPLATE_NAME="nvidia-template-debian13-${NVIDIA_DRIVER_VERSION}"
 
 echo "Creating Proxmox LXC template with NVIDIA driver ${NVIDIA_DRIVER_VERSION}..."
 
@@ -17,9 +17,9 @@ echo "Creating Proxmox LXC template with NVIDIA driver ${NVIDIA_DRIVER_VERSION}.
 mkdir -p /tmp/template
 cd /tmp/template
 
-# Create a Debian 12 rootfs
-echo "Creating Debian 12 rootfs with debootstrap..."
-debootstrap --arch=amd64 bookworm /tmp/template/rootfs http://deb.debian.org/debian/
+# Create a Debian 13 rootfs
+echo "Creating Debian 13 rootfs with debootstrap..."
+debootstrap --arch=amd64 trixie /tmp/template/rootfs http://deb.debian.org/debian/
 
 # Copy our setup script into the rootfs
 cp /template/setup_template.sh /tmp/template/rootfs/setup.sh
